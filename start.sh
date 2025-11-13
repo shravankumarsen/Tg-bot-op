@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-# Ensure aria2 is installed (Koyeb buildpacks provide it only sometimes)
-# If not installed, we skip — Dockerfile users always have aria2.
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$APP_DIR"
 
-# Start aria2 in background
+# Start aria2 in background (installed by Dockerfile)
 aria2c --enable-rpc \
        --rpc-listen-all=false \
        --rpc-allow-origin-all \
@@ -18,5 +18,5 @@ aria2c --enable-rpc \
 
 sleep 2
 
-# Run your bot
+# Run the bot with exec (so container PID 1 is python)
 exec python3 terabox.py
