@@ -350,13 +350,16 @@ async def safe_edit(message, text):
 
 # ---------- Filename cleaning (fix .mp4.mkv etc.) ----------
 
+VIDEO_EXTS = [".mp4", ".mkv", ".webm", ".mov", ".avi"]
+
+
 def clean_download_name(path_or_name: str) -> str:
     """
     Normalize filename:
     - strip query params
     - decode URL encoding
     - fix double-extension cases like *.mp4.mkv so final ext is original (.mkv)
-    - DO NOT force .mp4; keep original extension
+    - DO NOT force .mp4; keep original extension (e.g. .mkv)
     """
     name = os.path.basename(path_or_name)
     # remove query
@@ -368,11 +371,25 @@ def clean_download_name(path_or_name: str) -> str:
     if "/" in name:
         name = name.split("/")[-1]
 
-    # Fix pattern: *.mp4.mkv -> *.mkv (keep .mkv)
-    root, ext = os.path.splitext(name)  # ext is final extension
-    if ext.lower() == ".mkv" and root.lower().endswith(".mp4"):
-        root = root[:-4]  # remove trailing '.mp4'
-        name = root + ext
+    # Aggressive double-extension fix:
+    # repeatedly remove any extra video extension BEFORE the last one
+    while True:
+        root, ext = os.path.splitext(name)
+        if ext.lower() not in VIDEO_EXTS:
+            break  # last ext is not a known video ext; nothing special
+
+        lowered_root = root.lower()
+        removed = False
+        for extra_ext in VIDEO_EXTS:
+            if lowered_root.endswith(extra_ext):
+                # remove inner extension
+                root = root[: -len(extra_ext)]
+                name = root + ext
+                removed = True
+                break
+
+        if not removed:
+            break
 
     # Limit length to avoid Telegram issues
     if len(name) > 150:
@@ -653,12 +670,17 @@ async def handle_message(client: Client, message: Message):
             raise
 
     async def send_file_to_dump_and_user(path, cap, part_info: str = ""):
+        """
+        Upload flow:
+        - Always use BOT (app) to send to DUMP_CHAT_ID (no user session issues).
+        - Copy from dump to user.
+        - If dump fails, send directly to user.
+        """
         full_caption = cap + (f"\n\n{part_info}" if part_info else "")
-        uploader = user if USER_SESSION_STRING else app
 
-        # 1) send to dump
+        # 1) send to dump via BOT
         try:
-            sent = await uploader.send_video(
+            sent = await app.send_document(
                 DUMP_CHAT_ID,
                 path,
                 caption=full_caption,
@@ -668,7 +690,7 @@ async def handle_message(client: Client, message: Message):
             logger.error(f"BadRequest while sending to dump chat {DUMP_CHAT_ID}: {e}")
             # fallback: send directly to user
             try:
-                await app.send_video(
+                await app.send_document(
                     message.chat.id,
                     path,
                     caption=full_caption,
@@ -690,7 +712,7 @@ async def handle_message(client: Client, message: Message):
                 logger.warning(f"Could not forward from dump to user: {e}")
                 # fallback: send again directly
                 try:
-                    await app.send_video(
+                    await app.send_document(
                         message.chat.id,
                         path,
                         caption=full_caption,
