@@ -6,7 +6,7 @@ import logging
 import math
 import time
 import urllib.parse
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 import requests
 from pyrogram import Client, filters
@@ -69,6 +69,43 @@ except Exception as e:
     logger.error(f"Failed to set aria2 global options: {e}")
 
 # -------------------------------------------------
+# Supported domains text (for error message)
+# -------------------------------------------------
+SUPPORTED_DOMAINS_LIST = [
+    "mirrobox.com",
+    "nephobox.com",
+    "freeterabox.com",
+    "www.freeterabox.com",
+    "1024tera.com",
+    "4funbox.com",
+    "www.4funbox.com",
+    "www.mirrobox.com",
+    "www.nephobox.com",
+    "terabox.app",
+    "terabox.com",
+    "www.terabox.app",
+    "terabox.fun",
+    "www.terabox.com",
+    "www.1024tera.com",
+    "momerybox.com",
+    "www.momerybox.com",
+    "teraboxapp.com",
+    "www.teraboxapp.com",
+    "tibibox.com",
+    "www.tibibox.com",
+]
+
+SUPPORTED_DOMAINS_TEXT = (
+    "Sorry, we do not support this link.\n\n"
+    "Here's the supported domains list 👇\n\n"
+    "Supported domains:\n"
+    + "\n".join(SUPPORTED_DOMAINS_LIST)
+)
+
+# This is used for URL checking (same list as above)
+VALID_DOMAINS = SUPPORTED_DOMAINS_LIST.copy()
+
+# -------------------------------------------------
 # ENV vars
 # -------------------------------------------------
 API_ID = os.environ.get("TELEGRAM_API", "")
@@ -111,6 +148,24 @@ if not USER_SESSION_STRING:
     logger.info("USER_SESSION_STRING variable is missing! Bot will split files in 2 GB…")
     USER_SESSION_STRING = None
 
+# Debug log of envs (including DUMP_CHAT_ID) – partially masked for safety
+def _mask(s: str, keep: int = 4) -> str:
+    if not s:
+        return ""
+    if len(s) <= keep * 2:
+        return s
+    return s[:keep] + "..." + s[-keep:]
+
+
+logger.info(
+    "Loaded ENV:\n"
+    f"  TELEGRAM_API = {API_ID}\n"
+    f"  TELEGRAM_HASH = { _mask(API_HASH, 6) }\n"
+    f"  BOT_TOKEN = { _mask(BOT_TOKEN, 6) }\n"
+    f"  DUMP_CHAT_ID = {DUMP_CHAT_ID} (raw='{DUMP_CHAT_ID_RAW}')\n"
+    f"  FSUB_ID = {FSUB_ID} (raw='{FSUB_ID_RAW}')"
+)
+
 # -------------------------------------------------
 # Pyrogram clients
 # -------------------------------------------------
@@ -129,14 +184,6 @@ TERA_API_BASE = os.environ.get(
     "TERA_API_URL",
     "https://teraapi.boogafantastic.workers.dev/api"
 )
-
-VALID_DOMAINS = [
-    "terabox.com", "nephobox.com", "4funbox.com", "mirrobox.com",
-    "momerybox.com", "teraboxapp.com", "1024tera.com",
-    "terabox.app", "gibibox.com", "goaibox.com", "terasharelink.com",
-    "teraboxlink.com", "terafileshare.com",
-    "freeterabox.com", "terabox.fun", "tibibox.com"
-]
 
 # -------------------------------------------------
 # Helpers
@@ -162,16 +209,16 @@ def format_size(size: int) -> str:
 def is_probably_media_url(u: str) -> bool:
     if not isinstance(u, str):
         return False
-    u = u.lower()
+    u_low = u.lower()
     media_exts = (
         ".mp4", ".mkv", ".webm", ".mov", ".avi",
         ".mp3", ".m4a", ".flac", ".wav",
         ".m3u8"
     )
-    if any(u.split("?", 1)[0].endswith(ext) for ext in media_exts):
+    if any(u_low.split("?", 1)[0].endswith(ext) for ext in media_exts):
         return True
     # allow HLS-like /play/ or /download/ urls
-    if "m3u8" in u or "hls" in u or "/download" in u:
+    if "m3u8" in u_low or "hls" in u_low or "/download" in u_low:
         return True
     return False
 
@@ -195,23 +242,23 @@ async def is_user_member(client: Client, user_id: int) -> bool:
         return True
 
 
-def pick_media_url_from_api(data: dict, original_url: str) -> str:
+def pick_media_url_from_api(data: dict, original_url: str) -> str | None:
     """
     Try to extract a real media URL (mp4/mkv/m3u8…) from boogafantastic's API JSON.
-    If nothing usable is found, fall back to original share URL.
+    Returns None if nothing useful is found.
     """
     if not isinstance(data, dict):
-        return original_url
+        return None
+
+    candidates: list[str] = []
 
     # 1) Direct common keys
     for key in ["download_url", "download", "raw_url", "raw", "hls", "m3u8", "url"]:
         val = data.get(key)
         if isinstance(val, str) and is_probably_media_url(val):
-            return val
+            candidates.append(val)
 
-    candidates = []
-
-    # 2) JSON lists like files / medias / items / data
+    # 2) JSON lists like files / medias / items / data / sources
     for list_key in ["files", "medias", "items", "data", "sources"]:
         arr = data.get(list_key)
         if isinstance(arr, list):
@@ -235,44 +282,53 @@ def pick_media_url_from_api(data: dict, original_url: str) -> str:
 
     scan(data)
 
-    # De-duplicate & pick best
-    unique = []
+    # De-duplicate
+    unique: list[str] = []
     for c in candidates:
         if c not in unique:
             unique.append(c)
 
-    if unique:
-        # Prefer https and longer URL
-        unique.sort(key=lambda x: (not x.startswith("https"), -len(x)))
-        return unique[0]
+    if not unique:
+        return None
 
-    return original_url
+    # Prefer https and longer URL
+    unique.sort(key=lambda x: (not x.startswith("https"), -len(x)))
+    return unique[0]
 
 
-def call_tera_api(share_url: str) -> str:
+def call_tera_api(share_url: str) -> tuple[str | None, bool]:
     """
-    Call boogafantastic's API and return a media URL (or original share URL).
+    Call boogafantastic's API.
+    Returns (media_url, True) on success,
+    or (None, False) on failure / unsupported.
     """
     try:
         encoded = urllib.parse.quote(share_url, safe="")
         api_url = f"{TERA_API_BASE}?url={encoded}"
         logger.info(f"[API] Calling {api_url}")
         resp = requests.get(api_url, timeout=25)
-        resp.raise_for_status()
+
+        if resp.status_code != 200:
+            logger.error(f"[API] Non-200 status: {resp.status_code}")
+            return None, False
 
         try:
             data = resp.json()
         except Exception:
-            # If not JSON, just fallback
-            logger.warning("[API] Non-JSON response, falling back to original URL")
-            return share_url
+            logger.error("[API] Response not JSON, treat as failure")
+            return None, False
 
         media_url = pick_media_url_from_api(data, share_url)
+        if not media_url or not is_probably_media_url(media_url):
+            logger.error("[API] Could not extract a valid media URL")
+            return None, False
+
         logger.info(f"[API] Picked media URL: {media_url}")
-        return media_url
+        return media_url, True
+
     except Exception as e:
         logger.error(f"[API] Failed to call tera API: {e}")
-        return share_url
+        return None, False
 
 
 async def safe_edit(message, text):
@@ -290,6 +346,62 @@ async def safe_edit(message, text):
             logger.error(f"Failed to edit message: {e}")
     except Exception as e:
         logger.error(f"Failed to update status message: {e}")
+
+
+# ---------- Filename cleaning (fix .mp4.mkv etc.) ----------
+
+def clean_download_name(path_or_name: str) -> str:
+    """
+    Normalize filename:
+    - strip query params
+    - decode URL encoding
+    - fix double-extension cases like *.mp4.mkv so final ext is original (.mkv)
+    - DO NOT force .mp4; keep original extension
+    """
+    name = os.path.basename(path_or_name)
+    # remove query
+    name = name.split("?", 1)[0]
+    # URL decode
+    name = unquote(name)
+
+    # If path inside name, reduce to final segment
+    if "/" in name:
+        name = name.split("/")[-1]
+
+    # Fix pattern: *.mp4.mkv -> *.mkv (keep .mkv)
+    root, ext = os.path.splitext(name)  # ext is final extension
+    if ext.lower() == ".mkv" and root.lower().endswith(".mp4"):
+        root = root[:-4]  # remove trailing '.mp4'
+        name = root + ext
+
+    # Limit length to avoid Telegram issues
+    if len(name) > 150:
+        r, e = os.path.splitext(name)
+        r = r[:120]
+        name = r + e
+
+    return name
+
+
+def normalize_download_path(file_path: str) -> tuple[str, str]:
+    """
+    If needed, rename file on disk to cleaned filename.
+    Returns (new_path, display_name).
+    """
+    orig_name = os.path.basename(file_path)
+    clean_name = clean_download_name(orig_name)
+
+    if clean_name != orig_name:
+        new_path = os.path.join(os.path.dirname(file_path), clean_name)
+        try:
+            os.rename(file_path, new_path)
+            logger.info(f"Renamed file: {orig_name} -> {clean_name}")
+            return new_path, clean_name
+        except Exception as e:
+            logger.error(f"Failed to rename downloaded file: {e}")
+            return file_path, orig_name
+
+    return file_path, orig_name
 
 
 # -------------------------------------------------
@@ -347,28 +459,42 @@ async def handle_message(client: Client, message: Message):
         )
         return
 
-    # Extract URL from message
+    # Extract raw URL and check support
+    raw_url = None
     url = None
     for word in message.text.split():
-        if is_valid_url(word):
-            url = word
-            break
+        if word.startswith("http://") or word.startswith("https://"):
+            if raw_url is None:
+                raw_url = word
+            if is_valid_url(word):
+                url = word
+                break
 
-    if not url:
-        await message.reply_text("Please provide a valid Terabox link.")
+    if not raw_url:
+        await message.reply_text("Please provide a Terabox link.")
         return
 
-    # 1) Call boogafantastic API to get media URL
-    media_url = call_tera_api(url)
+    # User gave a link but domain isn't supported
+    if not url:
+        await message.reply_text(SUPPORTED_DOMAINS_TEXT)
+        return
 
+    # Reply status message
     status_message = await message.reply_text("sᴇɴᴅɪɴɢ ʏᴏᴜ ᴛʜᴇ ᴍᴇᴅɪᴀ...🤤")
+
+    # 1) Call boogafantastic API to get media URL
+    media_url, ok = call_tera_api(url)
+    if not ok or not media_url:
+        # API failed or unsupported type → tell user instead of fake video
+        await safe_edit(status_message, SUPPORTED_DOMAINS_TEXT)
+        return
 
     # 2) Add to aria2
     try:
         download = aria2.add_uris([media_url])
     except Exception as e:
         logger.error(f"aria2.add_uris failed: {e}")
-        await status_message.edit_text(f"❌ Failed to start download:\n`{e}`")
+        await safe_edit(status_message, f"❌ Failed to start download:\n`{e}`")
         return
 
     start_time = datetime.now()
@@ -429,8 +555,11 @@ async def handle_message(client: Client, message: Message):
 
     file_size = os.path.getsize(file_path)
 
+    # Normalize filename (fix .mp4.mkv etc., keep original extension e.g. .mkv)
+    file_path, display_name = normalize_download_path(file_path)
+
     caption = (
-        f"✨ {download.name}\n"
+        f"✨ {display_name}\n"
         f"👤 ʟᴇᴇᴄʜᴇᴅ ʙʏ : <a href='tg://user?id={user_id}'>{message.from_user.first_name}</a>\n"
         f"📥 ᴜsᴇʀ ʟɪɴᴋ: tg://user?id={user_id}\n\n"
         "[ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴊᴇᴛ-ᴍɪʀʀᴏʀ ❤️🚀](https://t.me/JetMirror)"
@@ -455,7 +584,7 @@ async def handle_message(client: Client, message: Message):
         bar = "★" * bar_filled + "☆" * (10 - bar_filled)
 
         text = (
-            f"┏ ғɪʟᴇɴᴀᴍᴇ: {download.name}\n"
+            f"┏ ғɪʟᴇɴᴀᴍᴇ: {display_name}\n"
             f"┠ [{bar}] {progress:.2f}%\n"
             f"┠ ᴘʀᴏᴄᴇssᴇᴅ: {format_size(current)} ᴏғ {format_size(total)}\n"
             f"┠ sᴛᴀᴛᴜs: 📤 Uploading to Telegram\n"
@@ -575,7 +704,7 @@ async def handle_message(client: Client, message: Message):
     try:
         if file_size > SPLIT_SIZE:
             await upload_status(
-                f"✂️ Splitting {download.name} ({format_size(file_size)})"
+                f"✂️ Splitting {display_name} ({format_size(file_size)})"
             )
             split_files = await split_video_with_ffmpeg(
                 file_path,
@@ -598,7 +727,7 @@ async def handle_message(client: Client, message: Message):
                         pass
         else:
             await upload_status(
-                f"📤 Uploading {download.name}\n"
+                f"📤 Uploading {display_name}\n"
                 f"Size: {format_size(file_size)}"
             )
             await send_file_to_dump_and_user(file_path, caption)
