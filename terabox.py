@@ -148,14 +148,12 @@ if not USER_SESSION_STRING:
     logger.info("USER_SESSION_STRING variable is missing! Bot will split files in 2 GB…")
     USER_SESSION_STRING = None
 
-# Debug log of envs (including DUMP_CHAT_ID) – partially masked for safety
 def _mask(s: str, keep: int = 4) -> str:
     if not s:
         return ""
     if len(s) <= keep * 2:
         return s
     return s[:keep] + "..." + s[-keep:]
-
 
 logger.info(
     "Loaded ENV:\n"
@@ -217,7 +215,6 @@ def is_probably_media_url(u: str) -> bool:
     )
     if any(u_low.split("?", 1)[0].endswith(ext) for ext in media_exts):
         return True
-    # allow HLS-like /play/ or /download/ urls
     if "m3u8" in u_low or "hls" in u_low or "/download" in u_low:
         return True
     return False
@@ -341,50 +338,37 @@ async def safe_edit(message, text):
         except Exception as ee:
             logger.error(f"Failed to edit after FloodWait: {ee}")
     except RPCError as e:
-        # Ignore MESSAGE_NOT_MODIFIED etc
         if "MESSAGE_NOT_MODIFIED" not in str(e):
             logger.error(f"Failed to edit message: {e}")
     except Exception as e:
         logger.error(f"Failed to update status message: {e}")
 
 
-# ---------- Filename cleaning (fix .mp4.mkv etc. WITHOUT changing real ext) ----------
+# ---------- Filename cleaning (fix .mp4.mkv etc., keep original ext) ----------
 
 def clean_download_name(path_or_name: str) -> str:
     """
     Normalize filename:
     - strip query params
     - decode URL encoding
-    - fix double-extension cases like *.mp4.mkv or *.mkv.mp4
-      by keeping the *inner/first* extension (assumed original)
-      e.g.  VID_123.mp4.mkv -> VID_123.mp4
-            movie.mkv.mp4   -> movie.mkv
-    - DO NOT force-convert extensions (.mkv stays .mkv, .mp4 stays .mp4, etc.)
+    - fix double-extension cases like *.mp4.mkv so final ext is original (.mkv)
+    - DO NOT force .mp4; keep original extension
     """
     name = os.path.basename(path_or_name)
-    # remove query part
     name = name.split("?", 1)[0]
-    # URL decode
     name = unquote(name)
 
-    # If path appears inside, reduce to final segment
     if "/" in name:
         name = name.split("/")[-1]
 
-    # Handle double extension:
-    base1, ext1 = os.path.splitext(name)      # last extension
-    base2, ext2 = os.path.splitext(base1)     # second-last extension
+    root, ext = os.path.splitext(name)  # ext is final extension
 
-    common_video_exts = {".mp4", ".mkv", ".webm", ".mov", ".avi"}
-    common_audio_exts = {".mp3", ".m4a", ".flac", ".wav"}
-    common_exts = common_video_exts | common_audio_exts
+    # Specific fix: *.mp4.mkv -> *.mkv
+    if ext.lower() == ".mkv" and root.lower().endswith(".mp4"):
+        root = root[:-4]
+        name = root + ext
 
-    # If we see something like *.mp4.mkv or *.mkv.mp4 → keep the inner ext (ext2)
-    if ext1.lower() in common_exts and ext2.lower() in common_exts:
-        # Prefer the first/inner extension as the original one
-        name = base2 + ext2
-
-    # Limit length to avoid Telegram issues
+    # Limit length for safety
     if len(name) > 150:
         r, e = os.path.splitext(name)
         r = r[:120]
@@ -412,6 +396,18 @@ def normalize_download_path(file_path: str) -> tuple[str, str]:
             return file_path, orig_name
 
     return file_path, orig_name
+
+
+def get_extension(name_or_path: str) -> str:
+    return os.path.splitext(name_or_path)[1].lower()
+
+
+def is_video_ext(ext: str) -> bool:
+    return ext in [".mp4", ".mkv", ".webm", ".mov", ".avi"]
+
+
+def is_image_ext(ext: str) -> bool:
+    return ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"]
 
 
 # -------------------------------------------------
@@ -453,7 +449,6 @@ async def handle_message(client: Client, message: Message):
     if not message.from_user:
         return
 
-    # ignore commands here (we already have /start handler)
     if message.text.startswith("/"):
         return
 
@@ -484,18 +479,15 @@ async def handle_message(client: Client, message: Message):
         await message.reply_text("Please provide a Terabox link.")
         return
 
-    # User gave a link but domain isn't supported
     if not url:
         await message.reply_text(SUPPORTED_DOMAINS_TEXT)
         return
 
-    # Reply status message
     status_message = await message.reply_text("sᴇɴᴅɪɴɢ ʏᴏᴜ ᴛʜᴇ ᴍᴇᴅɪᴀ...🤤")
 
-    # 1) Call boogafantastic API to get media URL
+    # 1) Call boogafantastic API
     media_url, ok = call_tera_api(url)
     if not ok or not media_url:
-        # API failed or unsupported type → tell user instead of fake video
         await safe_edit(status_message, SUPPORTED_DOMAINS_TEXT)
         return
 
@@ -518,7 +510,6 @@ async def handle_message(client: Client, message: Message):
             logger.error(f"Download update failed: {e}")
             break
 
-        # Stop conditions
         if download.is_complete:
             break
 
@@ -529,10 +520,7 @@ async def handle_message(client: Client, message: Message):
 
         total = download.total_length or 0
         completed = download.completed_length or 0
-        if total <= 0:
-            progress = 0.0
-        else:
-            progress = completed * 100 / total
+        progress = completed * 100 / total if total > 0 else 0.0
 
         elapsed_time = datetime.now() - start_time
         elapsed_minutes, elapsed_seconds = divmod(elapsed_time.seconds, 60)
@@ -565,8 +553,9 @@ async def handle_message(client: Client, message: Message):
 
     file_size = os.path.getsize(file_path)
 
-    # Normalize filename (fix .mp4.mkv etc., keep original extension e.g. .mkv or .mp4)
+    # Normalize filename (keep original extension, fix .mp4.mkv)
     file_path, display_name = normalize_download_path(file_path)
+    ext = get_extension(display_name)
 
     caption = (
         f"✨ {display_name}\n"
@@ -614,7 +603,6 @@ async def handle_message(client: Client, message: Message):
             start_split = datetime.now()
             last_progress_update = time.time()
 
-            # Get total duration
             proc = await asyncio.create_subprocess_exec(
                 "ffprobe", "-v", "error", "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1", input_path,
@@ -662,28 +650,46 @@ async def handle_message(client: Client, message: Message):
             logger.error(f"Split error: {e}")
             raise
 
+    async def send_media(uploader_client: Client, chat_id: int, path: str, cap: str):
+        """Send media with correct method based on extension."""
+        e = get_extension(path)
+        if is_video_ext(e):
+            return await uploader_client.send_video(
+                chat_id,
+                path,
+                caption=cap,
+                supports_streaming=True,
+                progress=upload_progress
+            )
+        elif is_image_ext(e):
+            return await uploader_client.send_photo(
+                chat_id,
+                path,
+                caption=cap,
+                progress=upload_progress
+            )
+        else:
+            return await uploader_client.send_document(
+                chat_id,
+                path,
+                caption=cap,
+                progress=upload_progress
+            )
+
     async def send_file_to_dump_and_user(path, cap, part_info: str = ""):
         full_caption = cap + (f"\n\n{part_info}" if part_info else "")
-        uploader = user if USER_SESSION_STRING else app
+
+        # Always prefer user client if running, else bot
+        uploader = user or app
 
         # 1) send to dump
         try:
-            sent = await uploader.send_video(
-                DUMP_CHAT_ID,
-                path,
-                caption=full_caption,
-                progress=upload_progress
-            )
+            sent = await send_media(uploader, DUMP_CHAT_ID, path, full_caption)
         except RPCError as e:
             logger.error(f"BadRequest while sending to dump chat {DUMP_CHAT_ID}: {e}")
             # fallback: send directly to user
             try:
-                await app.send_video(
-                    message.chat.id,
-                    path,
-                    caption=full_caption,
-                    progress=upload_progress
-                )
+                await send_media(app, message.chat.id, path, full_caption)
             except Exception as e2:
                 logger.error(f"Fallback direct send failed: {e2}")
                 raise
@@ -698,21 +704,15 @@ async def handle_message(client: Client, message: Message):
                 )
             except Exception as e:
                 logger.warning(f"Could not forward from dump to user: {e}")
-                # fallback: send again directly
                 try:
-                    await app.send_video(
-                        message.chat.id,
-                        path,
-                        caption=full_caption,
-                        progress=upload_progress
-                    )
+                    await send_media(app, message.chat.id, path, full_caption)
                 except Exception as e2:
                     logger.error(f"Final send to user failed: {e2}")
                     raise
 
     # 5) Handle upload (with optional splitting)
     try:
-        if file_size > SPLIT_SIZE:
+        if is_video_ext(ext) and file_size > SPLIT_SIZE:
             await upload_status(
                 f"✂️ Splitting {display_name} ({format_size(file_size)})"
             )
@@ -778,9 +778,21 @@ def keep_alive():
 
 
 async def start_user_client():
-    if user:
+    global user, SPLIT_SIZE
+    if not user:
+        return
+    try:
         await user.start()
         logger.info("User client started.")
+    except RPCError as e:
+        # If session is dead, disable user client and fall back to bot only
+        logger.error(f"User client failed to start: {e}. Disabling user client.")
+        user = None
+        SPLIT_SIZE = 2 * 1024 * 1024 * 1024  # back to 2 GB
+    except Exception as e:
+        logger.error(f"Unexpected error starting user client: {e}")
+        user = None
+        SPLIT_SIZE = 2 * 1024 * 1024 * 1024
 
 
 def run_user():
