@@ -441,9 +441,9 @@ def is_image_ext(ext: str) -> bool:
 # -------------------------------------------------
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client: Client, message: Message):
-    join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url="https://t.me/jetmirror")
-    developer_button = InlineKeyboardButton("ᴅᴇᴠᴇʟᴏᴘᴇʀ ⚡️", url="https://t.me/rtx5069")
-    repo_btn = InlineKeyboardButton("ʀᴇᴘᴏ 🌐", url="https://github.com/Hrishi2861/Terabox-Downloader-Bot")
+    join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url="https://t.me/xenondownloader")
+    developer_button = InlineKeyboardButton("ᴅᴇᴠᴇʟᴏᴘᴇʀ ⚡️", url="https://t.me/Lux_Eren")
+    repo_btn = InlineKeyboardButton("ʜᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ 🌐", url="https://t.me/+KttPZhEPnVozMTk1")
 
     user_mention = message.from_user.mention
     reply_markup = InlineKeyboardMarkup([[join_button, developer_button], [repo_btn]])
@@ -482,7 +482,7 @@ async def handle_message(client: Client, message: Message):
 
     # Force-subscribe check
     if not await is_user_member(client, user_id):
-        join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url="https://t.me/jetmirror")
+        join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url="https://t.me/xenondownloader")
         reply_markup = InlineKeyboardMarkup([[join_button]])
         await message.reply_text(
             "ʏᴏᴜ ᴍᴜsᴛ ᴊᴏɪɴ ᴍʏ ᴄʜᴀɴɴᴇʟ ᴛᴏ ᴜsᴇ ᴍᴇ.",
@@ -588,7 +588,7 @@ async def handle_message(client: Client, message: Message):
         f"✨ {display_name}\n"
         f"👤 ʟᴇᴇᴄʜᴇᴅ ʙʏ : <a href='tg://user?id={user_id}'>{message.from_user.first_name}</a>\n"
         f"📥 ᴜsᴇʀ ʟɪɴᴋ: tg://user?id={user_id}\n\n"
-        "[ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴊᴇᴛ-ᴍɪʀʀᴏʀ ❤️🚀](https://t.me/JetMirror)"
+        "[ᴘᴏᴡᴇʀᴇᴅ ʙʏ 𝙭𝙚𝙣𝙤𝙣 ᴅᴏᴡɴʟᴏᴀᴅᴇʀ 👾](https://t.me/xenondownloader)"
     )
 
     last_update_time = time.time()
