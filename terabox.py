@@ -176,11 +176,13 @@ if USER_SESSION_STRING:
     SPLIT_SIZE = 4 * 1024 * 1024 * 1024  # ~4 GB
 
 # -------------------------------------------------
-# Tera API (boogafantastic)
+# Tera API (NEW: teradl.tiiny.io)
 # -------------------------------------------------
+# You can still override via env TERA_API_URL if you want,
+# but by default it uses the new API you gave.
 TERA_API_BASE = os.environ.get(
     "TERA_API_URL",
-    "https://teraapi.boogafantastic.workers.dev/api"
+    "https://teradl.tiiny.io/"
 )
 
 # -------------------------------------------------
@@ -241,21 +243,18 @@ async def is_user_member(client: Client, user_id: int) -> bool:
 
 def pick_media_url_from_api(data: dict, original_url: str) -> str | None:
     """
-    Try to extract a real media URL (mp4/mkv/m3u8…) from boogafantastic's API JSON.
-    Returns None if nothing useful is found.
+    (Kept for compatibility, but NOT used by the new API anymore)
     """
     if not isinstance(data, dict):
         return None
 
     candidates: list[str] = []
 
-    # 1) Direct common keys
     for key in ["download_url", "download", "raw_url", "raw", "hls", "m3u8", "url"]:
         val = data.get(key)
         if isinstance(val, str) and is_probably_media_url(val):
             candidates.append(val)
 
-    # 2) JSON lists like files / medias / items / data / sources
     for list_key in ["files", "medias", "items", "data", "sources"]:
         arr = data.get(list_key)
         if isinstance(arr, list):
@@ -265,7 +264,6 @@ def pick_media_url_from_api(data: dict, original_url: str) -> str | None:
                         if isinstance(v, str) and is_probably_media_url(v):
                             candidates.append(v)
 
-    # 3) Scan nested dict values for any media-like URL
     def scan(obj):
         if isinstance(obj, dict):
             for v in obj.values():
@@ -279,7 +277,6 @@ def pick_media_url_from_api(data: dict, original_url: str) -> str | None:
 
     scan(data)
 
-    # De-duplicate
     unique: list[str] = []
     for c in candidates:
         if c not in unique:
@@ -288,20 +285,33 @@ def pick_media_url_from_api(data: dict, original_url: str) -> str | None:
     if not unique:
         return None
 
-    # Prefer https and longer URL
     unique.sort(key=lambda x: (not x.startswith("https"), -len(x)))
     return unique[0]
 
 
 def call_tera_api(share_url: str) -> tuple[str | None, bool]:
     """
-    Call boogafantastic's API.
+    Call NEW terabox API:
+      https://teradl.tiiny.io/?key=RushVx&link={link}
+
+    Expected JSON:
+    {
+      "data": [
+        {
+          "title": "...",
+          "size": "...",
+          "download": "https://.....",
+          "Channel": "@BesicCode"
+        }
+      ]
+    }
+
     Returns (media_url, True) on success,
     or (None, False) on failure / unsupported.
     """
     try:
         encoded = urllib.parse.quote(share_url, safe="")
-        api_url = f"{TERA_API_BASE}?url={encoded}"
+        api_url = f"{TERA_API_BASE}?key=RushVx&link={encoded}"
         logger.info(f"[API] Calling {api_url}")
         resp = requests.get(api_url, timeout=25)
 
@@ -315,11 +325,27 @@ def call_tera_api(share_url: str) -> tuple[str | None, bool]:
             logger.error("[API] Response not JSON, treat as failure")
             return None, False
 
-        media_url = pick_media_url_from_api(data, share_url)
-        if not media_url or not is_probably_media_url(media_url):
-            logger.error("[API] Could not extract a valid media URL")
+        if not isinstance(data, dict):
+            logger.error("[API] JSON root is not an object")
             return None, False
 
+        items = data.get("data")
+        if not isinstance(items, list) or not items:
+            logger.error("[API] 'data' array missing or empty")
+            return None, False
+
+        first = items[0]
+        if not isinstance(first, dict):
+            logger.error("[API] First element in 'data' is not an object")
+            return None, False
+
+        media_url = first.get("download") or first.get("url")
+        if not media_url:
+            logger.error("[API] 'download' field missing in first data item")
+            return None, False
+
+        # We trust the API; don't over-filter with is_probably_media_url,
+        # so images/docs/etc. also work.
         logger.info(f"[API] Picked media URL: {media_url}")
         return media_url, True
 
@@ -485,7 +511,7 @@ async def handle_message(client: Client, message: Message):
 
     status_message = await message.reply_text("sᴇɴᴅɪɴɢ ʏᴏᴜ ᴛʜᴇ ᴍᴇᴅɪᴀ...🤤")
 
-    # 1) Call boogafantastic API
+    # 1) Call NEW API
     media_url, ok = call_tera_api(url)
     if not ok or not media_url:
         await safe_edit(status_message, SUPPORTED_DOMAINS_TEXT)
@@ -535,6 +561,7 @@ async def handle_message(client: Client, message: Message):
             f"┠ sᴛᴀᴛᴜs: 📥 Downloading\n"
             f"┠ ᴇɴɢɪɴᴇ: <b><u>Aria2c v1.37.0</u></b>\n"
             f"┠ sᴘᴇᴇᴅ: {format_size(download.download_speed)}/s\n"
+            f"┠ ᴇɴɢɪɴᴇ: <b><u>Aria2c v1.37.0</u></b>\n"
             f"┠ ᴇᴛᴀ: {download.eta} | ᴇʟᴀᴘsᴇᴅ: {elapsed_minutes}m {elapsed_seconds}s\n"
             f"┖ ᴜsᴇʀ: <a href='tg://user?id={user_id}'>{message.from_user.first_name}</a> | ɪᴅ: {user_id}\n"
         )
