@@ -1,1 +1,1 @@
-worker: bash env_builder.sh
+worker: python terabox.py
