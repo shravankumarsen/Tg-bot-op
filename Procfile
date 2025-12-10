@@ -1,1 +1,1 @@
-worker: python terabox.py
+worker: bash start.sh
