@@ -96,7 +96,8 @@ SUPPORTED_DOMAINS_LIST = [
 ]
 
 SUPPORTED_DOMAINS_TEXT = (
-    ⛔ 𝙏𝙝𝙞𝙨 𝙡𝙞𝙣𝙠 𝙞𝙨 𝙣𝙤𝙩 𝙨𝙪𝙥𝙥𝙤𝙧𝙩𝙚𝙙, 𝙥𝙡𝙚𝙖𝙨𝙚 𝙩𝙧𝙮 𝙬𝙞𝙩𝙝 𝙖 𝙙𝙞𝙛𝙛𝙚𝙧𝙚𝙣𝙩 𝙡𝙞𝙣𝙠 ↻
+    "⛔ 𝙏𝙝𝙞𝙨 𝙡𝙞𝙣𝙠 𝙞𝙨 𝙣𝙤𝙩 𝙨𝙪𝙥𝙥𝙤𝙧𝙩𝙚𝙙,\n"
+    "𝙥𝙡𝙚𝙖𝙨𝙚 𝙩𝙧𝙮 𝙬𝙞𝙩𝙝 𝙖 𝙙𝙞𝙛𝙛𝙚𝙧𝙚𝙣𝙩 𝙡𝙞𝙣𝙠 ↻"
 )
 
 # This is used for URL checking (same list as above)
