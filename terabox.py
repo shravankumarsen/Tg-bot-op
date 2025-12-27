@@ -222,20 +222,25 @@ def is_probably_media_url(u: str) -> bool:
 async def is_user_member(client: Client, user_id: int) -> bool:
     try:
         member = await client.get_chat_member(FSUB_ID, user_id)
-        if member.status in [
+        return member.status in (
             ChatMemberStatus.MEMBER,
             ChatMemberStatus.ADMINISTRATOR,
             ChatMemberStatus.OWNER,
-        ]:
-            return True
-        return False
+        )
+
     except RPCError as e:
-        logger.error(f"Error checking membership for {user_id}: {e}")
-        # If fsub chat invalid, don't block user completely:
-        return True
+        logger.warning(
+            f"[FSUB] Membership check failed for user {user_id}: {e}"
+        )
+        # ❗ Block user if check fails
+        return False
+
     except Exception as e:
-        logger.error(f"Unexpected error in is_user_member: {e}")
-        return True
+        logger.error(
+            f"[FSUB] Unexpected error for user {user_id}: {e}"
+        )
+        # ❗ Block user if check fails
+        return False
 
 
 def pick_media_url_from_api(data: dict, original_url: str) -> str | None:
