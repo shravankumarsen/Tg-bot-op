@@ -131,14 +131,9 @@ except ValueError:
     logger.error(f"DUMP_CHAT_ID must be integer, got: {DUMP_CHAT_ID_RAW}")
     raise SystemExit(1)
 
-FSUB_ID_RAW = os.environ.get("FSUB_ID", "")
-if not FSUB_ID_RAW:
+FSUB_ID = os.environ.get("FSUB_ID", "")
+if not FSUB_ID:
     logger.error("FSUB_ID variable is missing! Exiting now")
-    raise SystemExit(1)
-try:
-    FSUB_ID = int(FSUB_ID_RAW)
-except ValueError:
-    logger.error(f"FSUB_ID must be integer, got: {FSUB_ID_RAW}")
     raise SystemExit(1)
 
 USER_SESSION_STRING = os.environ.get("USER_SESSION_STRING", "")
@@ -159,7 +154,7 @@ logger.info(
     f"  TELEGRAM_HASH = { _mask(API_HASH, 6) }\n"
     f"  BOT_TOKEN = { _mask(BOT_TOKEN, 6) }\n"
     f"  DUMP_CHAT_ID = {DUMP_CHAT_ID} (raw='{DUMP_CHAT_ID_RAW}')\n"
-    f"  FSUB_ID = {FSUB_ID} (raw='{FSUB_ID_RAW}')"
+    f"  FSUB_ID = {FSUB_ID}"
 )
 
 # -------------------------------------------------
@@ -485,7 +480,8 @@ async def handle_message(client: Client, message: Message):
 
     # Force-subscribe check
     if not await is_user_member(client, user_id):
-        join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url="https://t.me/xenondownloader")
+        join_url = f"https://t.me/{FSUB_ID.lstrip('@')}"
+join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url=join_url)
         reply_markup = InlineKeyboardMarkup([[join_button]])
         await message.reply_text(
             "ʏᴏᴜ ᴍᴜsᴛ ᴊᴏɪɴ ᴍʏ ᴄʜᴀɴɴᴇʟ ᴛᴏ ᴜsᴇ ᴍᴇ.",
