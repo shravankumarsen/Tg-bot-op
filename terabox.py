@@ -480,14 +480,15 @@ async def handle_message(client: Client, message: Message):
 
     # Force-subscribe check
     if not await is_user_member(client, user_id):
-        join_url = f"https://t.me/{FSUB_ID.lstrip('@')}"
-join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url=join_url)
-        reply_markup = InlineKeyboardMarkup([[join_button]])
-        await message.reply_text(
-            "ʏᴏᴜ ᴍᴜsᴛ ᴊᴏɪɴ ᴍʏ ᴄʜᴀɴɴᴇʟ ᴛᴏ ᴜsᴇ ᴍᴇ.",
-            reply_markup=reply_markup
-        )
-        return
+    join_url = f"https://t.me/{FSUB_ID.lstrip('@')}"
+    join_button = InlineKeyboardButton("ᴊᴏɪɴ ❤️🚀", url=join_url)
+    reply_markup = InlineKeyboardMarkup([[join_button]])
+    await message.reply_text(
+        "ʏᴏᴜ ᴍᴜsᴛ ᴊᴏɪɴ ᴍʏ ᴄʜᴀɴɴᴇʟ ᴛᴏ ᴜsᴇ ᴍᴇ.",
+        reply_markup=reply_markup
+    )
+    return
+
 
     # Extract raw URL and check support
     raw_url = None
